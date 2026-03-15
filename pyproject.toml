@@ -1,0 +1,15 @@
+[project]
+name = "real-esrgan-coreml"
+version = "0.1.0"
+description = "Real-ESRGAN on Apple Silicon via CoreML. Fastest open-source upscaler on Mac."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "coremltools>=8.0",
+    "numpy>=1.24",
+    "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+convert = ["torch>=2.0"]
