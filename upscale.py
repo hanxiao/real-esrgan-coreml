@@ -1,9 +1,9 @@
 """Real-ESRGAN inference via CoreML backend.
 
 Usage:
-    python coreml_upscale.py input.png -o output.png
-    python coreml_upscale.py input.png --compute-unit ALL
-    python coreml_upscale.py --convert --size 512   # one-time conversion
+    python upscale.py input.png -o output.png
+    python upscale.py input.png --model animevideo --compute-unit CPU_AND_GPU
+    python upscale.py --convert --model x4plus --size 522
 
 Requires: coremltools (no torch at runtime).
 """
@@ -18,22 +18,29 @@ import numpy as np
 from PIL import Image
 
 WEIGHTS_DIR = Path(__file__).parent / "weights"
-SCALE = 4
 PRE_PAD = 10
 
+MODEL_CONFIGS = {
+    "x4plus": dict(scale=4),
+    "x2plus": dict(scale=2),
+    "anime_6B": dict(scale=4),
+    "animevideo": dict(scale=4),
+    "general": dict(scale=4),
+}
 
-def get_mlpackage_path(input_size: int, fp16: bool = True) -> Path:
-    """Return expected .mlpackage path for given input size."""
+
+def get_mlpackage_path(model_name: str, input_size: int, fp16: bool = True) -> Path:
+    """Return expected .mlpackage path for given model and input size."""
     dtype_label = "fp16" if fp16 else "fp32"
-    return WEIGHTS_DIR / f"RealESRGAN_x4plus_{input_size}_{dtype_label}.mlpackage"
+    return WEIGHTS_DIR / f"RealESRGAN_{model_name}_{input_size}_{dtype_label}.mlpackage"
 
 
-def load_coreml_model(input_size: int, compute_unit: str = "ALL", fp16: bool = True):
+def load_coreml_model(model_name: str, input_size: int, compute_unit: str = "ALL", fp16: bool = True):
     """Load CoreML model. Returns (model, output_key_name)."""
-    path = get_mlpackage_path(input_size, fp16)
+    path = get_mlpackage_path(model_name, input_size, fp16)
     if not path.exists():
         print(f"Model not found at {path}")
-        print(f"Run: uv run python coreml_convert.py --size {input_size}" +
+        print(f"Run: uv run python convert.py --model {model_name} --size {input_size}" +
               (" --fp32" if not fp16 else ""))
         sys.exit(1)
 
@@ -50,7 +57,6 @@ def load_coreml_model(input_size: int, compute_unit: str = "ALL", fp16: bool = T
     model = ct.models.MLModel(str(path), compute_units=cu)
     print(f"Loaded in {time.time() - t0:.1f}s")
 
-    # Discover output key name
     spec = model.get_spec()
     out_key = spec.description.output[0].name
     return model, out_key
@@ -69,9 +75,10 @@ def upscale_image_coreml(
     model,
     out_key: str,
     img_array: np.ndarray,
+    scale: int = 4,
     pre_pad: int = PRE_PAD,
 ) -> np.ndarray:
-    """Upscale (H, W, C) float32 [0,1] image via CoreML. Returns (H*4, W*4, C) float32."""
+    """Upscale (H, W, C) float32 [0,1] image via CoreML. Returns (H*scale, W*scale, C) float32."""
     h, w, c = img_array.shape
 
     # Pre-pad (right and bottom only, matching MLX path)
@@ -91,7 +98,7 @@ def upscale_image_coreml(
     # Remove pre-pad from output
     if pre_pad > 0:
         oh, ow = output.shape[0], output.shape[1]
-        output = output[:oh - pre_pad * SCALE, :ow - pre_pad * SCALE, :]
+        output = output[:oh - pre_pad * scale, :ow - pre_pad * scale, :]
 
     return np.clip(output, 0.0, 1.0).astype(np.float32)
 
@@ -99,35 +106,34 @@ def upscale_image_coreml(
 def process_image(
     input_path: str,
     output_path: str,
+    model_name: str = "x4plus",
     compute_unit: str = "ALL",
     fp16: bool = True,
     pre_pad: int = PRE_PAD,
 ):
     """Full pipeline: load image, upscale via CoreML, save."""
+    scale = MODEL_CONFIGS[model_name]["scale"]
+
     img = Image.open(input_path).convert("RGB")
     h, w = img.size[1], img.size[0]  # PIL is (w, h)
     print(f"Input: {w}x{h}")
 
-    # The CoreML model has a fixed input size, so we need the right one
+    # The CoreML model has a fixed input size
     padded_h = h + pre_pad
     padded_w = w + pre_pad
-    input_size = max(padded_h, padded_w)
-    # Round up to nearest multiple of common sizes
-    # For now, require exact match - user should convert with matching size
-    mlpackage_path = get_mlpackage_path(padded_h, fp16)
+    mlpackage_path = get_mlpackage_path(model_name, padded_h, fp16)
     if not mlpackage_path.exists():
-        # Try with padded dimensions
         print(f"No model for size {padded_h}x{padded_w}.")
-        print(f"Convert first: uv run python coreml_convert.py --size {max(padded_h, padded_w)}")
+        print(f"Convert first: uv run python convert.py --model {model_name} --size {max(padded_h, padded_w)}")
         sys.exit(1)
 
-    model, out_key = load_coreml_model(padded_h, compute_unit, fp16)
+    model, out_key = load_coreml_model(model_name, padded_h, compute_unit, fp16)
 
     rgb_array = np.array(img, dtype=np.float32) / 255.0
 
     print("Upscaling...")
     t0 = time.time()
-    output = upscale_image_coreml(model, out_key, rgb_array, pre_pad)
+    output = upscale_image_coreml(model, out_key, rgb_array, scale, pre_pad)
     elapsed = time.time() - t0
     print(f"Done in {elapsed:.2f}s")
 
@@ -142,6 +148,8 @@ def main():
     parser = argparse.ArgumentParser(description="Real-ESRGAN upscaling with CoreML")
     parser.add_argument("input", nargs="?", help="Input image path")
     parser.add_argument("-o", "--output", help="Output image path")
+    parser.add_argument("--model", default="x4plus", choices=list(MODEL_CONFIGS.keys()),
+                        help="Model variant (default: x4plus)")
     parser.add_argument("--compute-unit", default="ALL",
                         choices=["ALL", "CPU_AND_GPU", "CPU_ONLY", "CPU_AND_NE"],
                         help="CoreML compute unit (default: ALL)")
@@ -156,7 +164,7 @@ def main():
 
     if args.convert:
         from convert import convert
-        convert(input_size=args.size, use_fp16=not args.fp32)
+        convert(model_name=args.model, input_size=args.size, use_fp16=not args.fp32)
         return
 
     if not args.input:
@@ -168,6 +176,7 @@ def main():
 
     process_image(
         args.input, args.output,
+        model_name=args.model,
         compute_unit=args.compute_unit,
         fp16=not args.fp32,
         pre_pad=args.pre_pad,
