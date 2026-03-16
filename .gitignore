@@ -1,3 +1,4 @@
 weights/*.mlpackage
 weights/*.pth
 weights/*.zip
+__pycache__/
