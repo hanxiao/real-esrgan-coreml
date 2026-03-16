@@ -2,157 +2,140 @@
 
 Real-ESRGAN image upscaling via CoreML on Apple Silicon. Up to 1.6x faster than MLX, 5-10x more energy efficient with ANE.
 
-All 5 official model variants supported.
-
-## Performance (M3 Ultra, fp16, avg over 256/512/768 inputs, 30s sampling)
-
-### Speed
-
-| Model | CoreML CPU+GPU | CoreML ANE | MLX | Speedup (CoreML vs MLX) |
-|-------|---------------|------------|-----|------------------------|
-| x4plus | 0.47s | 1.31s | 0.75s | 1.6x |
-| x2plus | 0.12s | 0.30s | 0.20s | 1.6x |
-| anime_6B | 0.15s | 0.35s | 0.23s | 1.5x |
-| animevideo | 0.02s | 0.06s | 0.02s | 1.0x |
-| general | 0.03s | 0.10s | 0.04s | 1.2x |
-
-### Power and Energy
-
-| Model | Backend | Power (W) | Energy (J) | Energy vs MLX |
-|-------|---------|-----------|------------|---------------|
-| x4plus | CPU+GPU | 127 | 60 | 0.6x |
-| x4plus | ANE | **10** | **12** | **0.12x** |
-| x4plus | MLX | 128 | 99 | 1.0x |
-| x2plus | CPU+GPU | 114 | 15 | 0.6x |
-| x2plus | ANE | **11** | **3** | **0.12x** |
-| x2plus | MLX | 110 | 25 | 1.0x |
-| anime_6B | CPU+GPU | 123 | 19 | 0.6x |
-| anime_6B | ANE | **10** | **4** | **0.13x** |
-| anime_6B | MLX | 131 | 31 | 1.0x |
-| animevideo | CPU+GPU | 68 | 2 | 0.5x |
-| animevideo | ANE | **8** | **0.5** | **0.18x** |
-| animevideo | MLX | 126 | 3 | 1.0x |
-| general | CPU+GPU | 86 | 3 | 0.6x |
-| general | ANE | **8** | **1** | **0.19x** |
-| general | MLX | 133 | 5 | 1.0x |
-
-Power measured with [macmon](https://github.com/vladkens/macmon) (sudoless, 100ms interval, 30s per measurement).
-
-### Summary
-
-- **Fastest**: CoreML CPU+GPU (1.5-1.6x faster than MLX for RRDBNet models)
-- **Most energy efficient**: CoreML ANE (8-11W constant, 5-10x less energy than MLX)
-- **MLX**: flexible (dynamic input sizes) but slowest and highest power draw
-
-ANE power draw is constant (~10W) regardless of model size, while GPU modes scale with compute (68-133W). For battery-powered devices (iPhone/iPad/MacBook), ANE saves 5-10x energy per upscale.
-
-## Models
-
-| Name | Architecture | Params | Use Case |
-|------|-------------|--------|----------|
-| x4plus | RRDBNet-23 | 64MB | best quality, general photos |
-| x2plus | RRDBNet-23 | 64MB | 2x upscale |
-| anime_6B | RRDBNet-6 | 17MB | anime images, lighter |
-| animevideo | SRVGGNetCompact-16 | 3MB | anime video, fastest |
-| general | SRVGGNetCompact-32 | 6MB | general purpose, fast |
-
-## Install
-
-```bash
-uv sync
-```
+All 5 official model variants supported. Any input size handled automatically via tiling.
 
 ## Quick Start
 
 ```bash
-# 1. Convert model to CoreML (one-time, needs torch)
-uv pip install torch
-uv run python convert.py --model x4plus --size 522    # for 512x512 input (512 + 10 pre-pad)
+uv sync
+# Upscale (auto-downloads pre-converted model from GitHub release)
+uv run python upscale.py photo.jpg -o photo_4x.png
 
-# 2. Upscale (fastest)
-uv run python upscale.py input.png -o output.png --model x4plus --compute-unit CPU_AND_GPU
+# Fastest (GPU)
+uv run python upscale.py photo.jpg -o photo_4x.png --compute-unit CPU_AND_GPU
 
-# 2b. Upscale (most energy efficient)
-uv run python upscale.py input.png -o output.png --model x4plus --compute-unit ALL
+# Most energy efficient (ANE, batch inference)
+uv run python upscale.py photo.jpg -o photo_4x.png --compute-unit ALL
 ```
+
+No torch needed at runtime. Models auto-download on first use (~30MB for x4plus).
+
+## Pre-converted Models
+
+Pre-converted CoreML models are hosted as [GitHub release artifacts](https://github.com/hanxiao/real-esrgan-coreml/releases/tag/v1.0.0). The script downloads them automatically.
+
+| Model | batch=1 (GPU) | flexbatch (ANE) | Size |
+|-------|--------------|-----------------|------|
+| x4plus | [download](https://github.com/hanxiao/real-esrgan-coreml/releases/download/v1.0.0/RealESRGAN_x4plus_522_fp16.zip) | [download](https://github.com/hanxiao/real-esrgan-coreml/releases/download/v1.0.0/RealESRGAN_x4plus_522_fp16_flexbatch.zip) | 30M |
+| x2plus | [download](https://github.com/hanxiao/real-esrgan-coreml/releases/download/v1.0.0/RealESRGAN_x2plus_522_fp16.zip) | [download](https://github.com/hanxiao/real-esrgan-coreml/releases/download/v1.0.0/RealESRGAN_x2plus_522_fp16_flexbatch.zip) | 30M |
+| anime_6B | [download](https://github.com/hanxiao/real-esrgan-coreml/releases/download/v1.0.0/RealESRGAN_anime_6B_522_fp16.zip) | [download](https://github.com/hanxiao/real-esrgan-coreml/releases/download/v1.0.0/RealESRGAN_anime_6B_522_fp16_flexbatch.zip) | 7.9M |
+| animevideo | [download](https://github.com/hanxiao/real-esrgan-coreml/releases/download/v1.0.0/RealESRGAN_animevideo_522_fp16.zip) | [download](https://github.com/hanxiao/real-esrgan-coreml/releases/download/v1.0.0/RealESRGAN_animevideo_522_fp16_flexbatch.zip) | 1.1M |
+| general | [download](https://github.com/hanxiao/real-esrgan-coreml/releases/download/v1.0.0/RealESRGAN_general_522_fp16.zip) | [download](https://github.com/hanxiao/real-esrgan-coreml/releases/download/v1.0.0/RealESRGAN_general_522_fp16_flexbatch.zip) | 2.2M |
+
+**batch=1**: fixed input shape, fastest on CPU+GPU mode.
+**flexbatch**: flexible batch 1-8, enables batch inference on ANE for 2x speedup.
+
+Models are hardware-independent -- works on any Apple Silicon (M1/M2/M3/M4/A-series). CoreML JIT-compiles for the target chip on first load.
+
+## Performance
+
+### Speed (M3 Ultra, fp16, avg over 256/512/768 inputs)
+
+| Model | CoreML CPU+GPU | CoreML ANE (batch) | MLX |
+|-------|---------------|-------------------|-----|
+| x4plus | **0.47s** | 2.24s | 0.75s |
+| x2plus | **0.12s** | 0.30s | 0.20s |
+| anime_6B | **0.15s** | 0.35s | 0.23s |
+| animevideo | **0.02s** | 0.06s | 0.02s |
+| general | **0.03s** | 0.10s | 0.04s |
+
+### Power and Energy (M3 Ultra, 30s sampling via macmon)
+
+| Model | Backend | Power (W) | Energy (J) |
+|-------|---------|-----------|------------|
+| x4plus | CPU+GPU | 127 | 60 |
+| x4plus | **ANE** | **10** | **12** |
+| x4plus | MLX | 128 | 99 |
+| x2plus | CPU+GPU | 114 | 15 |
+| x2plus | **ANE** | **11** | **3** |
+| x2plus | MLX | 110 | 25 |
+| anime_6B | CPU+GPU | 123 | 19 |
+| anime_6B | **ANE** | **10** | **4** |
+| anime_6B | MLX | 131 | 31 |
+
+ANE power draw is constant (~10W) regardless of model size, while GPU modes scale with compute (68-133W).
+
+### ANE Batch Inference
+
+ANE benefits from batch inference (processing multiple tiles simultaneously):
+
+| x4plus (4 tiles) | Sequential | Batch=4 | Speedup |
+|---|---|---|---|
+| ANE | 4.53s | **2.24s** | 2.0x |
+| GPU | 1.57s | 1.91s | 0.8x (slower) |
+
+GPU is already saturated by single tiles, so batching adds overhead. ANE has independent hardware pipelines that can truly parallelize.
+
+### Summary
+
+| | Speed | Power | Energy | Best For |
+|---|---|---|---|---|
+| CoreML CPU+GPU | fastest | high (68-127W) | medium | desktop, plugged in |
+| CoreML ANE | 2-3x slower | **low (8-11W)** | **lowest** | battery, mobile |
+| MLX | middle | high (110-133W) | highest | dynamic sizes |
+
+## Models
+
+| Name | Architecture | Params | Scale | Use Case |
+|------|-------------|--------|-------|----------|
+| x4plus | RRDBNet-23 | 64MB | 4x | best quality, general photos |
+| x2plus | RRDBNet-23 | 64MB | 2x | 2x upscale |
+| anime_6B | RRDBNet-6 | 17MB | 4x | anime images, lighter |
+| animevideo | SRVGGNetCompact-16 | 3MB | 4x | anime video, fastest |
+| general | SRVGGNetCompact-32 | 6MB | 4x | general purpose, fast |
 
 ## Usage
 
 ```bash
-# x4plus (default, best quality)
+# Default (x4plus, best quality)
+uv run python upscale.py photo.jpg -o photo_4x.png
+
+# Choose model
+uv run python upscale.py photo.jpg -o photo_4x.png --model anime_6B
+
+# Choose compute unit
+uv run python upscale.py photo.jpg -o out.png --compute-unit CPU_AND_GPU  # fastest
+uv run python upscale.py photo.jpg -o out.png --compute-unit ALL          # lowest power
+
+# Custom tile size (smaller = less memory, more tiles)
+uv run python upscale.py large.jpg -o out.png --tile-size 256
+
+# Convert model manually (requires torch)
 uv run python convert.py --model x4plus --size 522
-uv run python upscale.py photo.jpg -o photo_4x.png --model x4plus
-
-# x2plus (2x upscale)
-uv run python convert.py --model x2plus --size 522
-uv run python upscale.py photo.jpg -o photo_2x.png --model x2plus
-
-# anime_6B (lighter, for anime)
-uv run python convert.py --model anime_6B --size 522
-uv run python upscale.py anime.png -o anime_4x.png --model anime_6B
-
-# animevideo (fastest, for anime video frames)
-uv run python convert.py --model animevideo --size 522
-uv run python upscale.py frame.png -o frame_4x.png --model animevideo
-
-# general (fast, general purpose)
-uv run python convert.py --model general --size 522
-uv run python upscale.py photo.jpg -o photo_4x.png --model general
-
-# convert for custom input size
-uv run python convert.py --model x4plus --size 1034   # for 1024x1024 input
-
-# fp32 precision
-uv run python convert.py --model x4plus --size 522 --fp32
-uv run python upscale.py photo.jpg -o out.png --model x4plus --fp32
 ```
-
-## Compute Units
-
-| Mode | Flag | Speed | Power | Best For |
-|------|------|-------|-------|----------|
-| CPU+GPU | `--compute-unit CPU_AND_GPU` | fastest | 68-127W | desktop, plugged in |
-| ALL (ANE) | `--compute-unit ALL` | 2-3x slower | 8-11W | battery, mobile |
 
 ## How It Works
 
-1. **convert.py**: one-time PyTorch -> CoreML conversion (traces model, converts via coremltools)
-2. **upscale.py**: runtime inference via CoreML (no torch needed)
-3. CoreML model has fixed input size -- convert for each size you need
-4. Pre-padding (10px reflect) handled automatically
+1. **Auto-download**: pre-converted CoreML models from GitHub release (no torch needed)
+2. **Tiling**: large images split into 512x512 tiles with overlap blending
+3. **Compute dispatch**: GPU mode uses batch=1 (optimal), ANE mode uses batch inference (2x faster)
+4. **Fallback**: if download fails, converts locally (requires torch + coremltools)
 
-## Input Size
-
-CoreML models are fixed-size. The actual model input = your image size + 10 (pre-pad).
-
-| Image Size | Convert Size |
-|-----------|-------------|
-| 512x512 | `--size 522` |
-| 1024x1024 | `--size 1034` |
-| 1920x1080 | `--size 1930` (max dim + 10) |
+CoreML models have fixed input sizes. Tiling handles any image size using a single 522x522 model (512 tile + 10px pre-pad).
 
 ## Benchmarking
 
 ```bash
-# speed + power benchmark (all models, CoreML vs MLX, uses macmon)
-uv pip install torch mlx
+# Speed + power benchmark (requires macmon: brew install vladkens/tap/macmon)
 uv run python benchmark_power.py
 
-# speed-only benchmark
+# Speed-only benchmark
 uv run python benchmark_all.py
 ```
 
 ## vs MLX
 
 See [real-esrgan-mlx](https://github.com/hanxiao/real-esrgan-mlx) for the pure MLX version.
-
-| | CoreML CPU+GPU | CoreML ANE | MLX |
-|---|---|---|---|
-| Speed | fastest | slowest | middle |
-| Power | high (68-127W) | **low (8-11W)** | high (110-133W) |
-| Energy | middle | **lowest** | highest |
-| Input size | fixed (pre-compile) | fixed | dynamic |
-| Dependencies | coremltools | coremltools | mlx |
 
 ## License
 

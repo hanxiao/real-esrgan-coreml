@@ -37,20 +37,59 @@ def get_mlpackage_path(model_name: str, input_size: int, fp16: bool = True) -> P
     return WEIGHTS_DIR / f"RealESRGAN_{model_name}_{input_size}_{dtype_label}.mlpackage"
 
 
-def ensure_model(model_name: str, input_size: int, fp16: bool = True) -> Path:
-    """Return .mlpackage path, auto-converting if it doesn't exist."""
-    path = get_mlpackage_path(model_name, input_size, fp16)
+GITHUB_RELEASE_URL = "https://github.com/hanxiao/real-esrgan-coreml/releases/download/v1.0.0"
+
+
+def download_model(model_name: str, input_size: int, fp16: bool = True, flexbatch: bool = False) -> Path:
+    """Download pre-converted model from GitHub release."""
+    from urllib.request import urlretrieve
+    import zipfile
+
+    dtype_label = "fp16" if fp16 else "fp32"
+    suffix = "_flexbatch" if flexbatch else ""
+    zip_name = f"RealESRGAN_{model_name}_{input_size}_{dtype_label}{suffix}.zip"
+    url = f"{GITHUB_RELEASE_URL}/{zip_name}"
+    zip_path = WEIGHTS_DIR / zip_name
+
+    WEIGHTS_DIR.mkdir(exist_ok=True)
+    print(f"Downloading {zip_name}...")
+    urlretrieve(url, str(zip_path))
+    print(f"Extracting...")
+    with zipfile.ZipFile(str(zip_path), 'r') as zf:
+        zf.extractall(str(WEIGHTS_DIR))
+    zip_path.unlink()
+
+    mlpkg_name = f"RealESRGAN_{model_name}_{input_size}_{dtype_label}{suffix}.mlpackage"
+    return WEIGHTS_DIR / mlpkg_name
+
+
+def ensure_model(model_name: str, input_size: int, fp16: bool = True, flexbatch: bool = False) -> Path:
+    """Return .mlpackage path, downloading from GitHub release or auto-converting if needed."""
+    dtype_label = "fp16" if fp16 else "fp32"
+    suffix = "_flexbatch" if flexbatch else ""
+    mlpkg_name = f"RealESRGAN_{model_name}_{input_size}_{dtype_label}{suffix}.mlpackage"
+    path = WEIGHTS_DIR / mlpkg_name
     if path.exists():
         return path
-    print(f"Model not found at {path.name}, auto-converting...")
+
+    # Try downloading pre-converted model from GitHub release
+    try:
+        return download_model(model_name, input_size, fp16, flexbatch)
+    except Exception as e:
+        print(f"Download failed ({e}), falling back to local conversion...")
+
+    # Fall back to local conversion (requires torch + coremltools)
     from convert import convert
     convert(model_name=model_name, input_size=input_size, use_fp16=fp16)
-    return path
+    return get_mlpackage_path(model_name, input_size, fp16)
 
 
 def load_coreml_model(model_name: str, input_size: int, compute_unit: str = "ALL", fp16: bool = True):
-    """Load CoreML model. Returns (model, output_key_name)."""
-    path = ensure_model(model_name, input_size, fp16)
+    """Load CoreML model. Returns (model, output_key_name).
+    Uses flexbatch model for ANE (ALL/CPU_AND_NE) for batch inference speedup.
+    """
+    use_flexbatch = compute_unit.upper() in ("ALL", "CPU_AND_NE")
+    path = ensure_model(model_name, input_size, fp16, flexbatch=use_flexbatch)
 
     cu_map = {
         "ALL": ct.ComputeUnit.ALL,
@@ -139,6 +178,48 @@ def compute_tile_starts(total_size: int, tile_size: int, overlap: int) -> list:
     return positions
 
 
+def _prepare_tile(img_array, y0, x0, y1, x1, model_size, pre_pad):
+    """Prepare a tile for inference: extract, pre-pad, pad to square. Returns (CHW, padded_h, padded_w, th, tw)."""
+    tile = img_array[y0:y1, x0:x1, :]
+    th, tw = tile.shape[:2]
+    if pre_pad > 0:
+        tile = pad_reflect_np(tile, pre_pad, pre_pad)
+    padded_h, padded_w = tile.shape[:2]
+    pad_h = model_size - padded_h
+    pad_w = model_size - padded_w
+    if pad_h > 0 or pad_w > 0:
+        tile = pad_reflect_np(tile, max(pad_h, 0), max(pad_w, 0))
+    chw = np.transpose(tile, (2, 0, 1)).astype(np.float32)
+    return chw, padded_h, padded_w, th, tw
+
+
+def _unpad_tile(out_nchw, padded_h, padded_w, scale, pre_pad):
+    """Remove padding from model output. Input is (C, H, W), returns (H, W, C)."""
+    tile_out = np.transpose(out_nchw, (1, 2, 0))  # HWC
+    tile_out = tile_out[:padded_h * scale, :padded_w * scale, :]
+    if pre_pad > 0:
+        oh, ow = tile_out.shape[0], tile_out.shape[1]
+        tile_out = tile_out[:oh - pre_pad * scale, :ow - pre_pad * scale, :]
+    return np.clip(tile_out, 0.0, 1.0)
+
+
+def _blend_weight(th, tw, y0, x0, y1, x1, h, w, scale, tile_overlap):
+    """Build blend weight for a tile with linear ramps in overlap regions."""
+    tile_weight = np.ones((th * scale, tw * scale, 1), dtype=np.float32)
+    ramp_pixels = tile_overlap * scale
+    if ramp_pixels > 0:
+        ramp = np.linspace(0, 1, ramp_pixels, dtype=np.float32)
+        if y0 > 0:
+            tile_weight[:ramp_pixels, :, :] *= ramp[:, None, None]
+        if y1 < h:
+            tile_weight[-ramp_pixels:, :, :] *= ramp[::-1, None, None]
+        if x0 > 0:
+            tile_weight[:, :ramp_pixels, :] *= ramp[None, :, None]
+        if x1 < w:
+            tile_weight[:, -ramp_pixels:, :] *= ramp[None, ::-1, None]
+    return tile_weight
+
+
 def upscale_image_coreml(
     model,
     out_key: str,
@@ -148,56 +229,70 @@ def upscale_image_coreml(
     pre_pad: int = PRE_PAD,
     tile_size: int = 512,
     tile_overlap: int = 32,
+    use_batch: bool = False,
+    max_batch: int = 8,
 ) -> np.ndarray:
-    """Upscale (H, W, C) float32 [0,1] image via CoreML with automatic tiling."""
+    """Upscale (H, W, C) float32 [0,1] image via CoreML with automatic tiling.
+    
+    use_batch=True enables batch inference (faster on ANE, slower on GPU).
+    """
     h, w, c = img_array.shape
 
-    # Check if image fits in a single tile
+    # Single tile path
     if h <= tile_size and w <= tile_size:
         return upscale_tile_coreml(model, out_key, img_array, model_size, scale, pre_pad)
 
-    # Tiled processing (sequential, batch=1 is faster than batched for GPU-bound CNN)
+    # Collect tile coordinates
+    y_starts = compute_tile_starts(h, tile_size, tile_overlap)
+    x_starts = compute_tile_starts(w, tile_size, tile_overlap)
+    tile_specs = []
+    for y0 in y_starts:
+        for x0 in x_starts:
+            tile_specs.append((y0, x0, min(y0 + tile_size, h), min(x0 + tile_size, w)))
+    total = len(tile_specs)
+
     out_h, out_w = h * scale, w * scale
     output = np.zeros((out_h, out_w, c), dtype=np.float32)
     weight_map = np.zeros((out_h, out_w, 1), dtype=np.float32)
 
-    y_starts = compute_tile_starts(h, tile_size, tile_overlap)
-    x_starts = compute_tile_starts(w, tile_size, tile_overlap)
-    total = len(y_starts) * len(x_starts)
+    if use_batch and total > 1:
+        # Batch inference: prepare all tiles, run in batches
+        tile_data = [_prepare_tile(img_array, *ts, model_size, pre_pad) for ts in tile_specs]
+        
+        processed = 0
+        for batch_start in range(0, total, max_batch):
+            batch_end = min(batch_start + max_batch, total)
+            batch_size = batch_end - batch_start
+            batch = np.stack([tile_data[i][0] for i in range(batch_start, batch_end)], axis=0)
+            
+            result = model.predict({"input": batch})
+            batch_out = result[out_key]  # (B, C, H, W)
 
-    tile_num = 0
-    for y0 in y_starts:
-        for x0 in x_starts:
-            tile_num += 1
+            for b in range(batch_size):
+                idx = batch_start + b
+                _, ph, pw, th, tw = tile_data[idx]
+                y0, x0, y1, x1 = tile_specs[idx]
+                
+                tile_out = _unpad_tile(batch_out[b], ph, pw, scale, pre_pad)
+                tile_weight = _blend_weight(th, tw, y0, x0, y1, x1, h, w, scale, tile_overlap)
 
-            y1 = min(y0 + tile_size, h)
-            x1 = min(x0 + tile_size, w)
-            th = y1 - y0
-            tw = x1 - x0
+                oy0, ox0 = y0 * scale, x0 * scale
+                output[oy0:oy0 + th * scale, ox0:ox0 + tw * scale, :] += tile_out * tile_weight
+                weight_map[oy0:oy0 + th * scale, ox0:ox0 + tw * scale, :] += tile_weight
 
+            processed += batch_size
+            print(f"\rTile {processed}/{total} (batch={batch_size})", end="", flush=True)
+    else:
+        # Sequential inference: one tile at a time (faster on GPU)
+        for tile_num, (y0, x0, y1, x1) in enumerate(tile_specs, 1):
             tile = img_array[y0:y1, x0:x1, :]
             tile_out = upscale_tile_coreml(model, out_key, tile, model_size, scale, pre_pad)
-
-            # Build blend weight with linear ramps in overlap regions
-            tile_weight = np.ones((th * scale, tw * scale, 1), dtype=np.float32)
-            ramp_pixels = tile_overlap * scale
-
-            if ramp_pixels > 0:
-                ramp = np.linspace(0, 1, ramp_pixels, dtype=np.float32)
-                if y0 > 0:
-                    tile_weight[:ramp_pixels, :, :] *= ramp[:, None, None]
-                if y1 < h:
-                    tile_weight[-ramp_pixels:, :, :] *= ramp[::-1, None, None]
-                if x0 > 0:
-                    tile_weight[:, :ramp_pixels, :] *= ramp[None, :, None]
-                if x1 < w:
-                    tile_weight[:, -ramp_pixels:, :] *= ramp[None, ::-1, None]
+            th, tw = y1 - y0, x1 - x0
+            tile_weight = _blend_weight(th, tw, y0, x0, y1, x1, h, w, scale, tile_overlap)
 
             oy0, ox0 = y0 * scale, x0 * scale
-            oy1, ox1 = oy0 + th * scale, ox0 + tw * scale
-            output[oy0:oy1, ox0:ox1, :] += tile_out * tile_weight
-            weight_map[oy0:oy1, ox0:ox1, :] += tile_weight
-
+            output[oy0:oy0 + th * scale, ox0:ox0 + tw * scale, :] += tile_out * tile_weight
+            weight_map[oy0:oy0 + th * scale, ox0:ox0 + tw * scale, :] += tile_weight
             print(f"\rTile {tile_num}/{total}", end="", flush=True)
 
     if total > 1:
@@ -232,9 +327,10 @@ def process_image(
 
     print("Upscaling...")
     t0 = time.time()
+    use_batch = compute_unit.upper() in ("ALL", "CPU_AND_NE")
     output = upscale_image_coreml(
         model, out_key, rgb_array, model_size, scale, pre_pad,
-        tile_size, tile_overlap,
+        tile_size, tile_overlap, use_batch=use_batch,
     )
     elapsed = time.time() - t0
     print(f"Done in {elapsed:.2f}s")
