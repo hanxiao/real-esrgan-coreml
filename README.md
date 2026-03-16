@@ -9,8 +9,11 @@ All 5 official model variants supported. Any input size handled automatically vi
 ```bash
 uv sync
 
-# Upscale (auto-downloads x4plus model on first run)
+# Upscale image (auto-downloads x4plus model on first run)
 uv run python upscale.py photo.jpg -o photo_4x.png
+
+# Upscale video/GIF (pipelined I/O, fully overlapped with inference)
+uv run python video_upscale.py input.mp4 -o output.mp4
 ```
 
 No torch needed at runtime. The default model (x4plus) auto-downloads on first use (~30MB).
@@ -54,6 +57,19 @@ Benchmarked on M3 Ultra, fp16, macmon power sampling.
 
 CoreML is both faster and more energy efficient than MLX thanks to the CoreML graph compiler's operator fusion and optimized Metal shaders.
 
+### Video Pipeline
+
+The video upscaler uses a pipelined architecture that fully hides I/O behind GPU compute:
+
+| Pipeline | Total Time | FPS | Speedup |
+|----------|-----------|-----|---------|
+| Sequential (read -> infer -> save) | 27.8s | 0.79 | 1.0x |
+| **Pipelined** (threaded I/O + parallel PNG) | **18.8s** | **1.17** | **1.48x** |
+
+*22 frames, 848x456, x4plus, M3 Ultra. Output is bit-identical.*
+
+Optimizations: threaded frame prefetch, parallel PNG encoding (8 workers), fast compression, pre-allocated input buffers. Wall time equals pure inference time -- all I/O is fully hidden.
+
 ### Tile Size
 
 ![Tile Benchmark](tile_benchmark.png)
@@ -80,11 +96,15 @@ Larger tiles produce better quality with fewer boundary artifacts. 512 is the op
 ## Usage
 
 ```bash
-# Default (x4plus, best quality)
+# Image upscale (default x4plus, best quality)
 uv run python upscale.py photo.jpg -o photo_4x.png
 
 # Choose model (downloads on first use)
 uv run python upscale.py photo.jpg -o photo_4x.png --model anime_6B
+
+# Video/GIF upscale (pipelined, optimal throughput)
+uv run python video_upscale.py input.mp4 -o output.mp4
+uv run python video_upscale.py input.mp4 -o output.mp4 --model animevideo
 
 # Custom tile size (smaller = less memory, more tiles)
 uv run python upscale.py large.jpg -o out.png --tile-size 256
