@@ -1,0 +1,7 @@
+experiment	speedup	fps	total_time	max_diff	status
+baseline	1.00	0.79	27.8	0	KEEP
+threaded_io_pipeline	1.07	0.84	26.1	0	KEEP
+threaded_io_parallel_save	1.39	1.10	20.0	0	KEEP
+8_save_workers	1.44	1.14	19.3	0	KEEP
+fast_png_compress	1.46	1.16	19.0	0	KEEP
+preallocated_input_buf	1.48	1.17	18.8	0	KEEP
