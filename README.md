@@ -52,11 +52,13 @@ Benchmarked on M3 Ultra, fp16, averaged over 256/512/768 input sizes, 30s power 
 
 | Model | CoreML CPU+GPU | CoreML ANE (batch) | MLX | Speedup vs MLX |
 |-------|---------------|-------------------|-----|----------------|
-| x4plus | **0.47s** | 2.24s | 0.75s | 1.6x |
-| x2plus | **0.12s** | 0.30s | 0.20s | 1.6x |
-| anime_6B | **0.15s** | 0.35s | 0.23s | 1.5x |
-| animevideo | **0.02s** | 0.06s | 0.02s | 1.0x |
-| general | **0.03s** | 0.10s | 0.04s | 1.2x |
+| x4plus | **0.47s** | 0.48s | 0.75s | 1.6x |
+| x2plus | 0.12s | **0.11s** | 0.20s | 1.8x |
+| anime_6B | **0.15s** | 0.15s | 0.23s | 1.5x |
+| animevideo | **0.02s** | 0.02s | 0.02s | 1.0x |
+| general | **0.03s** | 0.04s | 0.04s | 1.2x |
+
+With batch inference, ANE matches GPU speed while using 10x less power.
 
 ### Power and Energy
 
@@ -103,7 +105,7 @@ Larger tiles are faster and produce better quality (fewer boundary artifacts). 5
 | | Speed | Power | Energy | Best For |
 |---|---|---|---|---|
 | CoreML CPU+GPU | fastest | high (68-127W) | medium | desktop, plugged in |
-| CoreML ANE | 2-3x slower | **low (8-11W)** | **lowest** | battery, mobile |
+| CoreML ANE (batch) | same as GPU | **low (8-11W)** | **lowest** | battery, mobile, always |
 | MLX | middle | high (110-133W) | highest | dynamic input sizes |
 
 ## Models
