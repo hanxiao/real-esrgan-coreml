@@ -156,7 +156,7 @@ def upscale_image_coreml(
     if h <= tile_size and w <= tile_size:
         return upscale_tile_coreml(model, out_key, img_array, model_size, scale, pre_pad)
 
-    # Tiled processing
+    # Tiled processing (sequential, batch=1 is faster than batched for GPU-bound CNN)
     out_h, out_w = h * scale, w * scale
     output = np.zeros((out_h, out_w, c), dtype=np.float32)
     weight_map = np.zeros((out_h, out_w, 1), dtype=np.float32)
@@ -184,24 +184,17 @@ def upscale_image_coreml(
 
             if ramp_pixels > 0:
                 ramp = np.linspace(0, 1, ramp_pixels, dtype=np.float32)
-                # Top ramp (not for first row of tiles)
                 if y0 > 0:
                     tile_weight[:ramp_pixels, :, :] *= ramp[:, None, None]
-                # Bottom ramp (not for last row of tiles)
                 if y1 < h:
                     tile_weight[-ramp_pixels:, :, :] *= ramp[::-1, None, None]
-                # Left ramp (not for first column)
                 if x0 > 0:
                     tile_weight[:, :ramp_pixels, :] *= ramp[None, :, None]
-                # Right ramp (not for last column)
                 if x1 < w:
                     tile_weight[:, -ramp_pixels:, :] *= ramp[None, ::-1, None]
 
-            oy0 = y0 * scale
-            ox0 = x0 * scale
-            oy1 = oy0 + th * scale
-            ox1 = ox0 + tw * scale
-
+            oy0, ox0 = y0 * scale, x0 * scale
+            oy1, ox1 = oy0 + th * scale, ox0 + tw * scale
             output[oy0:oy1, ox0:ox1, :] += tile_out * tile_weight
             weight_map[oy0:oy1, ox0:ox1, :] += tile_weight
 
