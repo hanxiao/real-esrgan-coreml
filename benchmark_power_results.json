@@ -1,0 +1,62 @@
+[
+  {
+    "model": "x4plus",
+    "coreml_cpugpu_time": 0.4684218593143728,
+    "coreml_cpugpu_power": 126.74595552528739,
+    "coreml_cpugpu_energy": 60.23254408349069,
+    "coreml_all_time": 1.313904412987194,
+    "coreml_all_power": 9.826629216857873,
+    "coreml_all_energy": 12.329559616976338,
+    "mlx_time": 0.7459273656843889,
+    "mlx_power": 128.0504203035234,
+    "mlx_energy": 98.93341900697577
+  },
+  {
+    "model": "x2plus",
+    "coreml_cpugpu_time": 0.12354239167611879,
+    "coreml_cpugpu_power": 114.24497692413725,
+    "coreml_cpugpu_energy": 14.767388954821108,
+    "coreml_all_time": 0.300607590920905,
+    "coreml_all_power": 10.694994148453977,
+    "coreml_all_energy": 3.0041651777666534,
+    "mlx_time": 0.20209962287135164,
+    "mlx_power": 110.09575941473322,
+    "mlx_energy": 24.481993209457332
+  },
+  {
+    "model": "anime_6B",
+    "coreml_cpugpu_time": 0.15406996033031456,
+    "coreml_cpugpu_power": 122.84980102244663,
+    "coreml_cpugpu_energy": 19.12594185888559,
+    "coreml_all_time": 0.35122335104612823,
+    "coreml_all_power": 10.005107751673899,
+    "coreml_all_energy": 3.5145149481893836,
+    "mlx_time": 0.22937606646929978,
+    "mlx_power": 130.68935575857952,
+    "mlx_energy": 31.01131336358144
+  },
+  {
+    "model": "animevideo",
+    "coreml_cpugpu_time": 0.020629631931446485,
+    "coreml_cpugpu_power": 68.25970772024608,
+    "coreml_cpugpu_energy": 1.4658975838985226,
+    "coreml_all_time": 0.05727017666405466,
+    "coreml_all_power": 8.267322412261832,
+    "coreml_all_energy": 0.4769940731525173,
+    "mlx_time": 0.020903520394919342,
+    "mlx_power": 125.89486765014988,
+    "mlx_energy": 2.8234552428495974
+  },
+  {
+    "model": "general",
+    "coreml_cpugpu_time": 0.03264879463556533,
+    "coreml_cpugpu_power": 86.27686763280946,
+    "coreml_cpugpu_energy": 3.2765191646648995,
+    "coreml_all_time": 0.10214932943313441,
+    "coreml_all_power": 8.348975443372538,
+    "coreml_all_energy": 0.8587492401773344,
+    "mlx_time": 0.038204369382510046,
+    "mlx_power": 132.65051113120214,
+    "mlx_energy": 5.387238702291863
+  }
+]

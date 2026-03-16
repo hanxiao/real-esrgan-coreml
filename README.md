@@ -1,20 +1,50 @@
 # Real-ESRGAN CoreML
 
-Real-ESRGAN image upscaling via CoreML on Apple Silicon. Up to 1.7x faster than MLX, no PyTorch at runtime.
+Real-ESRGAN image upscaling via CoreML on Apple Silicon. Up to 1.6x faster than MLX, 5-10x more energy efficient with ANE.
 
 All 5 official model variants supported.
 
-## Performance (M3 Ultra, fp16, 512x512 input)
+## Performance (M3 Ultra, fp16, avg over 256/512/768 inputs, 30s sampling)
 
-| Model | Scale | Output | CoreML (s) | MLX (s) | Speedup | Max Diff |
-|-------|-------|--------|-----------|---------|---------|----------|
-| x4plus | 4x | 2048x2048 | 0.396 | 0.631 | 1.6x | 0.006 |
-| x2plus | 2x | 1024x1024 | 0.104 | 0.179 | 1.7x | 0.004 |
-| anime_6B | 4x | 2048x2048 | 0.131 | 0.194 | 1.5x | 0.005 |
-| animevideo | 4x | 2048x2048 | 0.018 | 0.018 | 1.0x | 0.007 |
-| general | 4x | 2048x2048 | 0.028 | 0.033 | 1.2x | 0.006 |
+### Speed
 
-CoreML CPU+GPU mode. Max diff is vs MLX output (both fp16), in [0, 1] range.
+| Model | CoreML CPU+GPU | CoreML ANE | MLX | Speedup (CoreML vs MLX) |
+|-------|---------------|------------|-----|------------------------|
+| x4plus | 0.47s | 1.31s | 0.75s | 1.6x |
+| x2plus | 0.12s | 0.30s | 0.20s | 1.6x |
+| anime_6B | 0.15s | 0.35s | 0.23s | 1.5x |
+| animevideo | 0.02s | 0.06s | 0.02s | 1.0x |
+| general | 0.03s | 0.10s | 0.04s | 1.2x |
+
+### Power and Energy
+
+| Model | Backend | Power (W) | Energy (J) | Energy vs MLX |
+|-------|---------|-----------|------------|---------------|
+| x4plus | CPU+GPU | 127 | 60 | 0.6x |
+| x4plus | ANE | **10** | **12** | **0.12x** |
+| x4plus | MLX | 128 | 99 | 1.0x |
+| x2plus | CPU+GPU | 114 | 15 | 0.6x |
+| x2plus | ANE | **11** | **3** | **0.12x** |
+| x2plus | MLX | 110 | 25 | 1.0x |
+| anime_6B | CPU+GPU | 123 | 19 | 0.6x |
+| anime_6B | ANE | **10** | **4** | **0.13x** |
+| anime_6B | MLX | 131 | 31 | 1.0x |
+| animevideo | CPU+GPU | 68 | 2 | 0.5x |
+| animevideo | ANE | **8** | **0.5** | **0.18x** |
+| animevideo | MLX | 126 | 3 | 1.0x |
+| general | CPU+GPU | 86 | 3 | 0.6x |
+| general | ANE | **8** | **1** | **0.19x** |
+| general | MLX | 133 | 5 | 1.0x |
+
+Power measured with [macmon](https://github.com/vladkens/macmon) (sudoless, 100ms interval, 30s per measurement).
+
+### Summary
+
+- **Fastest**: CoreML CPU+GPU (1.5-1.6x faster than MLX for RRDBNet models)
+- **Most energy efficient**: CoreML ANE (8-11W constant, 5-10x less energy than MLX)
+- **MLX**: flexible (dynamic input sizes) but slowest and highest power draw
+
+ANE power draw is constant (~10W) regardless of model size, while GPU modes scale with compute (68-133W). For battery-powered devices (iPhone/iPad/MacBook), ANE saves 5-10x energy per upscale.
 
 ## Models
 
@@ -39,8 +69,11 @@ uv sync
 uv pip install torch
 uv run python convert.py --model x4plus --size 522    # for 512x512 input (512 + 10 pre-pad)
 
-# 2. Upscale
+# 2. Upscale (fastest)
 uv run python upscale.py input.png -o output.png --model x4plus --compute-unit CPU_AND_GPU
+
+# 2b. Upscale (most energy efficient)
+uv run python upscale.py input.png -o output.png --model x4plus --compute-unit ALL
 ```
 
 ## Usage
@@ -74,11 +107,18 @@ uv run python convert.py --model x4plus --size 522 --fp32
 uv run python upscale.py photo.jpg -o out.png --model x4plus --fp32
 ```
 
+## Compute Units
+
+| Mode | Flag | Speed | Power | Best For |
+|------|------|-------|-------|----------|
+| CPU+GPU | `--compute-unit CPU_AND_GPU` | fastest | 68-127W | desktop, plugged in |
+| ALL (ANE) | `--compute-unit ALL` | 2-3x slower | 8-11W | battery, mobile |
+
 ## How It Works
 
 1. **convert.py**: one-time PyTorch -> CoreML conversion (traces model, converts via coremltools)
 2. **upscale.py**: runtime inference via CoreML (no torch needed)
-3. CoreML model has fixed input size - convert for each size you need
+3. CoreML model has fixed input size -- convert for each size you need
 4. Pre-padding (10px reflect) handled automatically
 
 ## Input Size
@@ -94,16 +134,25 @@ CoreML models are fixed-size. The actual model input = your image size + 10 (pre
 ## Benchmarking
 
 ```bash
-# benchmark all 5 models (CoreML vs MLX)
+# speed + power benchmark (all models, CoreML vs MLX, uses macmon)
 uv pip install torch mlx
+uv run python benchmark_power.py
+
+# speed-only benchmark
 uv run python benchmark_all.py
 ```
 
 ## vs MLX
 
-CoreML is 1.5-1.7x faster for RRDBNet models (x4plus, x2plus, anime_6B). SRVGGNetCompact models (animevideo, general) are roughly equivalent since they're already very fast.
+See [real-esrgan-mlx](https://github.com/hanxiao/real-esrgan-mlx) for the pure MLX version.
 
-MLX is more flexible (dynamic input sizes, no pre-compilation needed).
+| | CoreML CPU+GPU | CoreML ANE | MLX |
+|---|---|---|---|
+| Speed | fastest | slowest | middle |
+| Power | high (68-127W) | **low (8-11W)** | high (110-133W) |
+| Energy | middle | **lowest** | highest |
+| Input size | fixed (pre-compile) | fixed | dynamic |
+| Dependencies | coremltools | coremltools | mlx |
 
 ## License
 
